@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visualizador de Red de Arcos</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117;
+    --panel:#161b22;
+    --panel-border:#30363d;
+    --text:#e6edf3;
+    --muted:#8b949e;
+    --accent:#e8a23d;
+    --neon-out:#39ff14;
+    --neon-in:#ff2ec4;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:'SF Mono','Cascadia Code','JetBrains Mono',Consolas,monospace;overflow:hidden;}
+
+  #app{display:flex;flex-direction:column;height:100vh;}
+
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 20px;border-bottom:1px solid var(--panel-border);
+    background:linear-gradient(180deg, var(--panel), #11151c);
+    flex-shrink:0;flex-wrap:wrap;gap:10px;
+  }
+  .title-block h1{margin:0;font-size:16px;letter-spacing:0.5px;font-weight:600;color:var(--text);}
+  .title-block .sub{margin:2px 0 0;font-size:11.5px;color:var(--muted);letter-spacing:0.3px;}
+
+  .stats{display:flex;gap:14px;font-size:12px;color:var(--muted);}
+  .stats b{color:var(--accent);font-weight:600;}
+
+  .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  #search{
+    background:#0d1117;border:1px solid var(--panel-border);color:var(--text);
+    padding:7px 10px;border-radius:6px;font-size:12.5px;width:170px;
+    font-family:inherit;outline:none;
+  }
+  #search:focus{border-color:var(--accent);}
+  #search::placeholder{color:#5b6473;}
+
+  .btn{
+    background:#1c2330;border:1px solid var(--panel-border);color:var(--text);
+    padding:7px 12px;border-radius:6px;font-size:12px;cursor:pointer;
+    font-family:inherit;white-space:nowrap;
+  }
+  .btn:hover{border-color:var(--accent);color:var(--accent);}
+  .btn.small{padding:5px 9px;font-size:11px;}
+
+  main{flex:1;position:relative;display:flex;overflow:hidden;}
+
+  #network{flex:1;background:radial-gradient(circle at 50% 50%, #11151c 0%, #0a0d12 100%);}
+
+  /* ---- Overlay de carga ---- */
+  #upload-overlay{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(circle at 50% 40%, #11151c 0%, #0a0d12 100%);z-index:20;
+  }
+  #upload-overlay.hidden{display:none;}
+  .upload-card{
+    background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;
+    padding:30px 34px;width:430px;max-width:90vw;text-align:center;
+  }
+  .upload-card h2{margin:0 0 6px;font-size:16px;color:var(--text);}
+  .upload-card p.hint{margin:0 0 18px;font-size:11.5px;color:var(--muted);line-height:1.5;}
+  #drop-zone{
+    border:2px dashed var(--panel-border);border-radius:10px;padding:26px 16px;
+    cursor:pointer;transition:border-color .15s, background .15s;
+  }
+  #drop-zone:hover,#drop-zone.dragover{border-color:var(--accent);background:#1c2330;}
+  #drop-zone .dz-icon{font-size:26px;margin-bottom:6px;color:var(--accent);}
+  #drop-zone .dz-text{font-size:12px;color:var(--muted);}
+  .divider{margin:16px 0 10px;font-size:10px;color:var(--muted);letter-spacing:0.6px;text-transform:uppercase;}
+  #paste-area{
+    width:100%;height:64px;background:#0d1117;border:1px solid var(--panel-border);
+    color:var(--text);border-radius:8px;font-family:inherit;font-size:11px;padding:8px;
+    resize:vertical;margin-bottom:10px;
+  }
+  #upload-error{color:#ff6b6b;font-size:11.5px;margin-top:10px;min-height:14px;}
+
+  /* ---- Panel de reglas ---- */
+  #rules-panel{
+    position:absolute;top:54px;right:14px;width:340px;max-width:90vw;
+    background:rgba(22,27,34,0.97);border:1px solid var(--panel-border);border-radius:10px;
+    padding:14px;z-index:15;display:none;max-height:70vh;overflow:auto;
+  }
+  #rules-panel.open{display:block;}
+  .rp-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:12px;color:var(--text);}
+  .rp-header button{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;}
+  .rp-note{font-size:10.5px;color:var(--muted);margin-bottom:10px;line-height:1.4;}
+  .rule-row{display:flex;gap:6px;align-items:center;margin-bottom:6px;}
+  .rule-row input[type=text]{
+    background:#0d1117;border:1px solid var(--panel-border);color:var(--text);
+    border-radius:5px;padding:5px 6px;font-size:11px;font-family:inherit;
+  }
+  .rule-row .rr-prefix{width:55px;}
+  .rule-row .rr-label{flex:1;min-width:0;}
+  .rule-row input[type=color]{width:28px;height:26px;border:none;background:none;padding:0;cursor:pointer;}
+  .rule-row .rr-del{background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:14px;}
+  .rp-actions{display:flex;gap:8px;margin-top:10px;}
+
+  #legend{
+    position:absolute;left:14px;bottom:14px;background:rgba(22,27,34,0.92);
+    border:1px solid var(--panel-border);border-radius:8px;padding:10px 12px;
+    font-size:11.5px;min-width:190px;backdrop-filter:blur(4px);z-index:5;
+  }
+  #legend .lg-title{color:var(--muted);font-size:10px;text-transform:uppercase;
+    letter-spacing:0.8px;margin-bottom:7px;}
+  .lg-item{display:flex;align-items:center;gap:7px;padding:3px 4px;border-radius:4px;
+    cursor:pointer;user-select:none;}
+  .lg-item:hover{background:#1c2330;}
+  .lg-item.dim{opacity:0.35;}
+  .lg-dot{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+  .lg-label{color:var(--text);}
+  .lg-count{color:var(--muted);margin-left:auto;font-size:10.5px;}
+
+  #info{
+    position:absolute;right:14px;bottom:14px;background:rgba(22,27,34,0.92);
+    border:1px solid var(--panel-border);border-radius:8px;padding:10px 14px;
+    font-size:11.5px;color:var(--muted);max-width:230px;line-height:1.5;
+    backdrop-filter:blur(4px);z-index:5;
+  }
+  #info b{color:var(--text);}
+  .arc-key{display:flex;align-items:center;gap:6px;margin-top:7px;}
+  .arc-key .arc-line{width:18px;height:3px;border-radius:2px;}
+  .arc-key.out .arc-line{background:var(--neon-out);box-shadow:0 0 6px var(--neon-out);}
+  .arc-key.in .arc-line{background:var(--neon-in);box-shadow:0 0 6px var(--neon-in);}
+
+  #zoomctl{position:absolute;right:14px;top:14px;display:flex;flex-direction:column;gap:6px;z-index:5;}
+  #zoomctl button{
+    width:30px;height:30px;border-radius:6px;border:1px solid var(--panel-border);
+    background:rgba(22,27,34,0.92);color:var(--text);font-size:15px;cursor:pointer;
+    backdrop-filter:blur(4px);
+  }
+  #zoomctl button:hover{border-color:var(--accent);color:var(--accent);}
+
+  #node-card{
+    position:absolute;display:none;background:#1c2330;border:1px solid var(--accent);
+    border-radius:8px;padding:10px 13px;font-size:12px;z-index:10;pointer-events:none;
+    box-shadow:0 6px 18px rgba(0,0,0,0.45);min-width:150px;
+  }
+  #node-card .nc-name{font-size:14px;font-weight:700;color:var(--accent);margin-bottom:5px;}
+  #node-card .nc-row{color:var(--muted);font-size:11px;}
+  #node-card .nc-row b{color:var(--text);}
+
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:#2a313d;border-radius:4px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="title-block">
+      <h1>Visualizador de Red de Arcos &mdash; Origen &rarr; Destino</h1>
+      <p class="sub">Carga cualquier JSON de arcos &middot; clic + arrastre, scroll para zoom</p>
+    </div>
+    <div class="stats">
+      <span><b id="stat-nodes">0</b> nodos</span>
+      <span><b id="stat-edges">0</b> arcos</span>
+      <span id="stat-filter" style="display:none;"><b id="stat-filter-n">0</b> visibles</span>
+    </div>
+    <div class="controls">
+      <input id="search" type="text" placeholder="Buscar nodo..." autocomplete="off">
+      <button class="btn" id="btn-rules">&#9881; Reglas</button>
+      <button class="btn" id="btn-new-file">Cargar otro JSON</button>
+      <button class="btn" id="btn-reset">Restablecer vista</button>
+      <button class="btn" id="btn-physics">Pausar fisica</button>
+    </div>
+  </header>
+  <main>
+    <div id="network"></div>
+
+    <div id="upload-overlay">
+      <div class="upload-card">
+        <h2>Cargar red de arcos</h2>
+        <p class="hint">
+          Acepta JSON con claves tipo <b>"('A', 'B')"</b> o con mas dimensiones,
+          ej. <b>"('PC001','CHINA','PUMAWORA','PUMCOBUE')"</b> (se usan solo las dos ultimas).
+          El valor numerico asociado (costo) se ignora.
+        </p>
+        <div id="drop-zone">
+          <div class="dz-icon">&#9650;</div>
+          <div class="dz-text">Arrastra tu archivo .json aqui<br>o haz clic para seleccionarlo</div>
+        </div>
+        <input type="file" id="file-input" accept=".json,application/json" hidden>
+        <div class="divider">&mdash; o pega el JSON &mdash;</div>
+        <textarea id="paste-area" placeholder='{"(&#39;A&#39;, &#39;B&#39;)": 100, ...}'></textarea>
+        <button class="btn" id="btn-process-paste">Procesar JSON pegado</button>
+        <div id="upload-error"></div>
+      </div>
+    </div>
+
+    <div id="zoomctl">
+      <button id="zoom-in" title="Acercar">+</button>
+      <button id="zoom-out" title="Alejar">&minus;</button>
+      <button id="zoom-fit" title="Ajustar a pantalla">&#9678;</button>
+    </div>
+
+    <div id="rules-panel">
+      <div class="rp-header">
+        <span>Reglas de clasificacion (prefijo)</span>
+        <button id="rp-close">&times;</button>
+      </div>
+      <div class="rp-note">Se evalua el prefijo mas largo primero. Los nodos sin coincidencia quedan como "Sin clasificar".</div>
+      <div id="rules-rows"></div>
+      <button class="btn small" id="rp-add">+ Agregar regla</button>
+      <div class="rp-actions">
+        <button class="btn" id="rp-apply">Aplicar</button>
+        <button class="btn" id="rp-default">Restaurar por defecto</button>
+      </div>
+    </div>
+
+    <div id="legend"><div class="lg-title">Grupos (clic para filtrar)</div></div>
+
+    <div id="info">
+      Tama&ntilde;o del nodo = numero de conexiones.<br>
+      Pase el cursor sobre un nodo para resaltar sus arcos:
+      <div class="arc-key out"><span class="arc-line"></span> Salientes</div>
+      <div class="arc-key in"><span class="arc-line"></span> Entrantes</div>
+      <b>Doble clic</b> en vacio para deseleccionar.
+    </div>
+
+    <div id="node-card"></div>
+  </main>
+</div>
+
+<script>
+// ============================================================
+// Estado global
+// ============================================================
+let network = null, nodesDS = null, edgesDS = null;
+let rawNodes = [];        // [{id, deg, out, inn, rule, groupKey}]
+let rawEdgesGlobal = [];  // [{from, to}] unicos
+let visNodesGlobal = [];
+let visEdgesGlobal = [];
+let activeGroup = null;
+
+const OUT_COLOR = '#39ff14';
+const IN_COLOR = '#ff2ec4';
+const DEFAULT_EDGE = { color:'#3a4453', highlight:'#e8a23d', hover:'#e8a23d', opacity:0.55 };
+
+const defaultRules = [
+  { prefix:'PR', label:'Proveedor', color:'#e8638c' },
+  { prefix:'PU', label:'Puertos', color:'#4fb8af' },
+  { prefix:'PL', label:'Plantas', color:'#e0c341' },
+  { prefix:'CD', label:'Centros de Distribucion', color:'#9b7ede' },
+  { prefix:'D',  label:'Zonas de Demanda', color:'#5b8def' }
+];
+let rules = defaultRules.map(r => Object.assign({}, r));
+
+const networkContainer = document.getElementById('network');
+const card = document.getElementById('node-card');
+const searchInput = document.getElementById('search');
+const legendEl = document.getElementById('legend');
+const uploadOverlay = document.getElementById('upload-overlay');
+const uploadError = document.getElementById('upload-error');
+
+const options = {
+  layout: { improvedLayout:true },
+  physics: {
+    enabled:true,
+    solver:'forceAtlas2Based',
+    forceAtlas2Based: { gravitationalConstant:-65, centralGravity:0.012, springLength:120, springConstant:0.10, damping:0.45, avoidOverlap:0.6 },
+    stabilization: { iterations: 250, fit:true }
+  },
+  interaction: { hover:true, tooltipDelay:120, hideEdgesOnDrag:true, multiselect:false, navigationButtons:false, keyboard:false },
+  edges: { selectionWidth: 2.2 },
+  nodes: { shadow:false }
+};
+
+// ============================================================
+// Utilidades
+// ============================================================
+function shade(hex, pct){
+  const num = parseInt(hex.slice(1),16);
+  let r=(num>>16)+pct, g=((num>>8)&0x00FF)+pct, b=(num&0x0000FF)+pct;
+  r=Math.max(Math.min(255,r),0); g=Math.max(Math.min(255,g),0); b=Math.max(Math.min(255,b),0);
+  return '#' + (r<<16 | g<<8 | b).toString(16).padStart(6,'0');
+}
+
+function escapeAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
+
+function extractTupleParts(keyStr){
+  const re = /'([^']*)'|"([^"]*)"/g;
+  const matches = [...keyStr.matchAll(re)];
+  if(matches.length > 0){
+    return matches.map(m => m[1] !== undefined ? m[1] : m[2]);
+  }
+  const cleaned = keyStr.replace(/^[\(\[]\s*/, '').replace(/\s*[\)\]]$/, '');
+  return cleaned.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function colorFor(n){ return n.rule ? n.rule.color : '#7d8590'; }
+function labelFor(n){ return n.rule ? (n.rule.prefix + ' \u2014 ' + n.rule.label) : 'Sin clasificar'; }
+function buildTitle(n){
+  return n.id + '\nGrupo: ' + labelFor(n) + '\nConexiones: ' + n.deg + ' (salida ' + n.out + ' / entrada ' + n.inn + ')';
+}
+
+// ============================================================
+// Parseo y carga de datos
+// ============================================================
+function showUploadError(msg){ uploadError.textContent = msg; }
+
+function processJSONText(text){
+  let obj;
+  try{ obj = JSON.parse(text); }
+  catch(err){ throw new Error('El contenido no es un JSON valido.'); }
+
+  if(typeof obj !== 'object' || obj === null || Array.isArray(obj)){
+    throw new Error('Se esperaba un objeto JSON con claves de arcos.');
+  }
+
+  const pairs = [];
+  Object.keys(obj).forEach(key => {
+    const parts = extractTupleParts(key);
+    if(parts.length >= 2){
+      pairs.push([parts[parts.length-2], parts[parts.length-1]]);
+    }
+  });
+
+  if(pairs.length === 0){
+    throw new Error('No se encontraron pares origen-destino en las claves del JSON.');
+  }
+
+  loadGraphFromPairs(pairs);
+  uploadOverlay.classList.add('hidden');
+  uploadError.textContent = '';
+}
+
+function loadGraphFromPairs(pairs){
+  const seen = new Set();
+  const uniqueEdges = [];
+  pairs.forEach(([a,b]) => {
+    const k = a + '|||' + b;
+    if(!seen.has(k)){ seen.add(k); uniqueEdges.push({from:a, to:b}); }
+  });
+
+  const nodeSet = new Set();
+  uniqueEdges.forEach(e => { nodeSet.add(e.from); nodeSet.add(e.to); });
+
+  const degree = {}, outDeg = {}, inDeg = {};
+  nodeSet.forEach(n => { degree[n]=0; outDeg[n]=0; inDeg[n]=0; });
+  uniqueEdges.forEach(e => {
+    degree[e.from]++; degree[e.to]++;
+    outDeg[e.from]++; inDeg[e.to]++;
+  });
+
+  rawNodes = Array.from(nodeSet).sort().map(id => ({
+    id, deg:degree[id], out:outDeg[id], inn:inDeg[id]
+  }));
+  rawEdgesGlobal = uniqueEdges;
+
+  buildAndRenderNetwork();
+}
+
+function classifyNodes(){
+  const sorted = [...rules].filter(r => r.prefix).sort((a,b) => b.prefix.length - a.prefix.length);
+  rawNodes.forEach(n => {
+    const match = sorted.find(r => n.id.toUpperCase().startsWith(r.prefix.toUpperCase()));
+    n.rule = match || null;
+    n.groupKey = match ? match.prefix : '__OTRO__';
+  });
+}
+
+// ============================================================
+// Construccion / render del grafo
+// ============================================================
+function buildAndRenderNetwork(){
+  classifyNodes();
+
+  const maxDeg = Math.max(...rawNodes.map(n => n.deg), 1);
+  const minSize = 14, maxSize = 34;
+
+  visNodesGlobal = rawNodes.map(n => {
+    const sizeRatio = Math.sqrt(n.deg / maxDeg);
+    const size = minSize + sizeRatio * (maxSize - minSize);
+    const color = colorFor(n);
+    return {
+      id: n.id, label: n.id, group: n.groupKey, value: n.deg, size: size,
+      font: { color:'#e6edf3', size:12, face:"'SF Mono','Cascadia Code',Consolas,monospace", strokeWidth:3, strokeColor:'#0d1117' },
+      color: { background:color, border:shade(color,-25),
+        highlight:{background:color, border:'#ffffff'}, hover:{background:color, border:'#ffffff'} },
+      shape:'dot', borderWidth:2, title: buildTitle(n)
+    };
+  });
+
+  visEdgesGlobal = rawEdgesGlobal.map((e,i) => ({
+    id: 'e'+i, from: e.from, to: e.to,
+    color: DEFAULT_EDGE, width: 1.1,
+    arrows: { to: { enabled:true, scaleFactor:0.55 } },
+    smooth: { type:'dynamic' }
+  }));
+
+  if(network){ network.destroy(); network = null; }
+
+  nodesDS = new vis.DataSet(visNodesGlobal);
+  edgesDS = new vis.DataSet(visEdgesGlobal);
+
+  network = new vis.Network(networkContainer, { nodes:nodesDS, edges:edgesDS }, options);
+  network.once('stabilizationIterationsDone', function(){
+    network.setOptions({ physics:{ enabled:true, stabilization:false } });
+  });
+  attachNetworkEvents();
+
+  document.getElementById('stat-nodes').textContent = rawNodes.length;
+  document.getElementById('stat-edges').textContent = rawEdgesGlobal.length;
+  document.getElementById('stat-filter').style.display = 'none';
+  activeGroup = null;
+
+  buildLegend();
+}
+
+function applyRules(){
+  if(rawNodes.length === 0) return;
+  classifyNodes();
+  const updates = rawNodes.map(n => {
+    const color = colorFor(n);
+    return {
+      id: n.id, group: n.groupKey,
+      color: { background:color, border:shade(color,-25),
+        highlight:{background:color, border:'#ffffff'}, hover:{background:color, border:'#ffffff'} },
+      title: buildTitle(n)
+    };
+  });
+  nodesDS.update(updates);
+  buildLegend();
+}
+
+// ============================================================
+// Leyenda + filtro por grupo
+// ============================================================
+function buildLegend(){
+  legendEl.innerHTML = '<div class="lg-title">Grupos (clic para filtrar)</div>';
+  const counts = {};
+  rawNodes.forEach(n => { counts[n.groupKey] = (counts[n.groupKey]||0) + 1; });
+
+  const orderedKeys = rules.map(r => r.prefix).filter(k => counts[k]);
+  if(counts['__OTRO__']) orderedKeys.push('__OTRO__');
+
+  orderedKeys.forEach(key => {
+    const rule = rules.find(r => r.prefix === key);
+    const color = rule ? rule.color : '#7d8590';
+    const label = rule ? (rule.prefix + ' \u2014 ' + rule.label) : 'Sin clasificar';
+    const item = document.createElement('div');
+    item.className = 'lg-item';
+    item.dataset.group = key;
+    item.innerHTML = '<span class="lg-dot" style="background:'+color+'"></span>' +
+      '<span class="lg-label">'+label+'</span><span class="lg-count">'+counts[key]+'</span>';
+    item.addEventListener('click', () => toggleGroupFilter(key));
+    legendEl.appendChild(item);
+  });
+}
+
+function toggleGroupFilter(key){
+  if(activeGroup === key){ activeGroup = null; showAllNodes(); }
+  else { activeGroup = key; filterByGroup(key); }
+  document.querySelectorAll('.lg-item').forEach(el => {
+    el.classList.toggle('dim', activeGroup && el.dataset.group !== activeGroup);
+  });
+}
+
+function filterByGroup(key){
+  const keepIds = new Set(rawNodes.filter(n => n.groupKey === key).map(n => n.id));
+  nodesDS.update(visNodesGlobal.map(n => ({ id:n.id, hidden: !keepIds.has(n.id) })));
+  edgesDS.update(visEdgesGlobal.map(e => ({ id:e.id, hidden: !(keepIds.has(e.from) && keepIds.has(e.to)) })));
+  document.getElementById('stat-filter').style.display = 'inline';
+  document.getElementById('stat-filter-n').textContent = keepIds.size;
+  network.fit({ nodes: Array.from(keepIds), animation:{duration:400} });
+}
+
+function showAllNodes(){
+  nodesDS.update(visNodesGlobal.map(n => ({ id:n.id, hidden:false })));
+  edgesDS.update(visEdgesGlobal.map(e => ({ id:e.id, hidden:false })));
+  document.getElementById('stat-filter').style.display = 'none';
+  network.fit({ animation:{duration:400} });
+}
+
+// ============================================================
+// Resaltado neon de arcos por direccion
+// ============================================================
+function resetEdgeColors(){
+  if(!edgesDS) return;
+  edgesDS.update(visEdgesGlobal.map(e => ({ id:e.id, color:DEFAULT_EDGE, width:1.1 })));
+}
+
+function highlightEdgesForNode(nodeId){
+  if(!edgesDS) return;
+  const updates = visEdgesGlobal.map(e => {
+    if(e.from === nodeId) return { id:e.id, color:{ color:OUT_COLOR, highlight:OUT_COLOR, hover:OUT_COLOR, opacity:1 }, width:3 };
+    if(e.to === nodeId)   return { id:e.id, color:{ color:IN_COLOR, highlight:IN_COLOR, hover:IN_COLOR, opacity:1 }, width:3 };
+    return { id:e.id, color:{ color:'#3a4453', opacity:0.06 }, width:1 };
+  });
+  edgesDS.update(updates);
+}
+
+// ============================================================
+// Eventos del grafo (se reatan cada vez que se crea la red)
+// ============================================================
+function attachNetworkEvents(){
+  network.on('hoverNode', (params) => {
+    const n = rawNodes.find(x => x.id === params.node);
+    if(!n) return;
+    card.innerHTML = '<div class="nc-name">'+n.id+'</div>' +
+      '<div class="nc-row">Grupo: <b>'+labelFor(n)+'</b></div>' +
+      '<div class="nc-row">Conexiones totales: <b>'+n.deg+'</b></div>' +
+      '<div class="nc-row">Salientes: <b>'+n.out+'</b> &nbsp; Entrantes: <b>'+n.inn+'</b></div>';
+    card.style.display = 'block';
+    highlightEdgesForNode(n.id);
+  });
+  network.on('blurNode', () => { card.style.display = 'none'; resetEdgeColors(); });
+  network.on('dragStart', () => { card.style.display = 'none'; resetEdgeColors(); });
+  network.on('doubleClick', (params) => { if(params.nodes.length === 0) network.unselectAll(); });
+
+  networkContainer.addEventListener('mousemove', (ev) => {
+    if(card.style.display === 'block'){
+      card.style.left = (ev.offsetX + 18) + 'px';
+      card.style.top = (ev.offsetY + 8) + 'px';
+    }
+  });
+}
+
+// ============================================================
+// Carga de archivo (drag&drop, file picker, pegado)
+// ============================================================
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const pasteArea = document.getElementById('paste-area');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', (e) => {
+  if(e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function handleFile(file){
+  uploadError.textContent = '';
+  const reader = new FileReader();
+  reader.onload = (e) => { try{ processJSONText(e.target.result); } catch(err){ showUploadError(err.message); } };
+  reader.onerror = () => showUploadError('No se pudo leer el archivo.');
+  reader.readAsText(file);
+}
+
+document.getElementById('btn-process-paste').addEventListener('click', () => {
+  const text = pasteArea.value.trim();
+  if(!text){ showUploadError('Pega un JSON antes de procesar.'); return; }
+  try{ processJSONText(text); } catch(err){ showUploadError(err.message); }
+});
+
+document.getElementById('btn-new-file').addEventListener('click', () => {
+  uploadOverlay.classList.remove('hidden');
+});
+
+// ============================================================
+// Panel de reglas de clasificacion
+// ============================================================
+function renderRulesRows(){
+  const container = document.getElementById('rules-rows');
+  container.innerHTML = '';
+  rules.forEach((r, idx) => {
+    const row = document.createElement('div');
+    row.className = 'rule-row';
+    row.innerHTML =
+      '<input type="text" class="rr-prefix" value="'+escapeAttr(r.prefix)+'" maxlength="10" placeholder="Prefijo">' +
+      '<input type="text" class="rr-label" value="'+escapeAttr(r.label)+'" placeholder="Etiqueta">' +
+      '<input type="color" class="rr-color" value="'+r.color+'">' +
+      '<button class="rr-del" title="Eliminar">&times;</button>';
+    row.querySelector('.rr-del').addEventListener('click', () => { rules.splice(idx,1); renderRulesRows(); });
+    container.appendChild(row);
+  });
+}
+
+document.getElementById('btn-rules').addEventListener('click', () => {
+  document.getElementById('rules-panel').classList.toggle('open');
+});
+document.getElementById('rp-close').addEventListener('click', () => {
+  document.getElementById('rules-panel').classList.remove('open');
+});
+document.getElementById('rp-add').addEventListener('click', () => {
+  rules.push({ prefix:'', label:'Nuevo grupo', color:'#7d8590' });
+  renderRulesRows();
+});
+document.getElementById('rp-apply').addEventListener('click', () => {
+  const rows = document.querySelectorAll('#rules-rows .rule-row');
+  const newRules = [];
+  rows.forEach(row => {
+    const prefix = row.querySelector('.rr-prefix').value.trim();
+    const label = row.querySelector('.rr-label').value.trim() || prefix;
+    const color = row.querySelector('.rr-color').value;
+    if(prefix) newRules.push({ prefix, label, color });
+  });
+  rules = newRules;
+  applyRules();
+});
+document.getElementById('rp-default').addEventListener('click', () => {
+  rules = defaultRules.map(r => Object.assign({}, r));
+  renderRulesRows();
+  applyRules();
+});
+
+renderRulesRows();
+
+// ============================================================
+// Busqueda
+// ============================================================
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.trim().toUpperCase();
+  if(!q || !network) return;
+  const match = rawNodes.find(n => n.id === q) || rawNodes.find(n => n.id.startsWith(q));
+  if(match){
+    network.selectNodes([match.id]);
+    network.focus(match.id, { scale:1.6, animation:{duration:500, easingFunction:'easeInOutQuad'} });
+    highlightEdgesForNode(match.id);
+  }
+});
+searchInput.addEventListener('keydown', (e) => {
+  if(e.key === 'Enter' && network){
+    const q = searchInput.value.trim().toUpperCase();
+    const exact = rawNodes.find(n => n.id === q);
+    if(exact){
+      network.selectNodes([exact.id]);
+      network.focus(exact.id, { scale:1.8, animation:{duration:500} });
+      highlightEdgesForNode(exact.id);
+    }
+  }
+});
+
+// ============================================================
+// Botones generales
+// ============================================================
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if(!network) return;
+  activeGroup = null;
+  document.querySelectorAll('.lg-item').forEach(el => el.classList.remove('dim'));
+  showAllNodes();
+  resetEdgeColors();
+  searchInput.value = '';
+  network.unselectAll();
+});
+
+let physicsOn = true;
+document.getElementById('btn-physics').addEventListener('click', (e) => {
+  if(!network) return;
+  physicsOn = !physicsOn;
+  network.setOptions({ physics: { enabled: physicsOn } });
+  e.target.textContent = physicsOn ? 'Pausar fisica' : 'Activar fisica';
+});
+
+document.getElementById('zoom-in').addEventListener('click', () => {
+  if(network) network.moveTo({ scale: network.getScale() * 1.3, animation:{duration:200} });
+});
+document.getElementById('zoom-out').addEventListener('click', () => {
+  if(network) network.moveTo({ scale: network.getScale() / 1.3, animation:{duration:200} });
+});
+document.getElementById('zoom-fit').addEventListener('click', () => {
+  if(network) network.fit({ animation:{duration:400} });
+});
+</script>
+</body>
+</html>
